@@ -1,4 +1,3 @@
-
 #include <SPI.h>
 #include <MFRC522.h>
 #include <Arduino.h>
@@ -6,117 +5,152 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-#define RST_PIN 22
-#define SS_PIN 21
-#define BUZZER 15
+// ---------------------------
+// PIN CONFIGURATION
+/*
+Buzzer	 GPIO 15
+SDA	     GPIO 10
+SCK      GPIO 12
+MOSI     GPIO 11
+MISO     GPIO 13
+RST	     GPIO 9
+*/
 
-MFRC522 mfrc522(SS_PIN, RST_PIN);
+
+
+// ---------------------------
+#define SDA_PIN     10  // SS (SDA)
+#define RST_PIN     9
+#define BUZZER_PIN  15
+
+#define SCK_PIN     12
+#define MOSI_PIN    11
+#define MISO_PIN    13
+
+MFRC522 mfrc522(SDA_PIN, RST_PIN);
 MFRC522::MIFARE_Key key;
 MFRC522::StatusCode status;
 
-int blockNum = 2;
-
-byte bufferLen = 18;
-byte readBlockData[18];
-
-String card_holder_name;
+// ---------------------------
+// NETWORK + GOOGLE SCRIPT
+// ---------------------------
+const char* WIFI_SSID     = "bilalll";
+const char* WIFI_PASSWORD = "24f07870";
 const String sheet_url = "https://script.google.com/macros/s/AKfycby5EjBt6pC_tIiHP8EytfGDFyDHpkUG3aA94Yet0zP_eR2Hb2H4g-ZGxw_MQ34zpl2j/exec?name=";
 
-#define WIFI_SSID "bilalll"
-#define WIFI_PASSWORD "24f07870"
+// ---------------------------
+// RFID CONFIGURATION
+// ---------------------------
+int blockNum = 2;
+byte bufferLen = 18;
+byte readBlockData[18];
+String card_holder_name;
 
+// ---------------------------
+// SETUP
+// ---------------------------
 void setup() {
   Serial.begin(115200);
-  Serial.println();
-  Serial.print("Connecting to AP");
+  delay(1000);
+  Serial.println("Starting...");
+
+  // WiFi connection
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
+    delay(300);
     Serial.print(".");
-    delay(200);
   }
-  Serial.println("");
-  Serial.println("WiFi connected.");
-  Serial.println("IP address: ");
+  Serial.println("\nWiFi connected.");
+  Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-  Serial.println();
-  pinMode(BUZZER, OUTPUT);
-  SPI.begin();
+
+  // Pins
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  // SPI + RFID setup
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, SDA_PIN); // SCK, MISO, MOSI, SS
+  mfrc522.PCD_Init();
+  Serial.println("RFID Reader initialized.");
+  Serial.println("Scan a card...");
 }
 
+// ---------------------------
+// MAIN LOOP
+// ---------------------------
 void loop() {
-  mfrc522.PCD_Init();
-  if (!mfrc522.PICC_IsNewCardPresent()) { return; }
-  if (!mfrc522.PICC_ReadCardSerial()) { return; }
-  Serial.println();
-  Serial.println(F("Reading last data from RFID..."));
-  ReadDataFromBlock(blockNum, readBlockData);
-  //mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
+  if (!mfrc522.PICC_IsNewCardPresent()) return;
+  if (!mfrc522.PICC_ReadCardSerial()) return;
 
-  //Print the data read from block
-  Serial.println();
-  Serial.print(F("Last data in RFID:"));
+  Serial.println("\nCard detected! Reading data...");
+
+  ReadDataFromBlock(blockNum, readBlockData);
+
+  Serial.print("Block ");
   Serial.print(blockNum);
-  Serial.print(F(" --> "));
+  Serial.print(": ");
   for (int j = 0; j < 16; j++) {
     Serial.write(readBlockData[j]);
   }
   Serial.println();
-  digitalWrite(BUZZER, HIGH);
-  delay(200);
-  digitalWrite(BUZZER, LOW);
-  delay(200);
-  digitalWrite(BUZZER, HIGH);
-  delay(200);
-  digitalWrite(BUZZER, LOW);
 
+  // Buzz to confirm
+  tone(BUZZER_PIN, 1000, 200);
+  delay(250);
+  tone(BUZZER_PIN, 1200, 200);
+  delay(250);
+
+  // Send to Google Apps Script
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClientSecure client;
-    client.setInsecure();
-    card_holder_name = sheet_url + String((char*)readBlockData);
-    card_holder_name.trim();
-    Serial.println(card_holder_name);
-    HTTPClient https;
-    Serial.print(F("[HTTPS] begin...\n"));
+    client.setInsecure(); // accept all certificates
 
-    if (https.begin(client, (String)card_holder_name)) {
-      Serial.print(F("[HTTPS] GET...\n"));
-      // start connection and send HTTP header
+    card_holder_name = sheet_url + String((char*)readBlockData);
+    card_holder_name.trim();  // clean up extra characters
+
+    Serial.print("[HTTPS] Requesting URL: ");
+    Serial.println(card_holder_name);
+
+    HTTPClient https;
+    if (https.begin(client, card_holder_name)) {
       int httpCode = https.GET();
-      // httpCode will be negative on error
       if (httpCode > 0) {
-        // HTTP header has been sent and Server response header has been handled
         Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
-        // file found at server
       } else {
         Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
       }
       https.end();
-      delay(1000);
     } else {
-      Serial.printf("[HTTPS] Unable to connect\n");
+      Serial.println("[HTTPS] Unable to connect");
     }
   }
+
+  // Halt card so another scan can happen
+  mfrc522.PICC_HaltA();
+  mfrc522.PCD_StopCrypto1();
+  delay(2000);  // Prevent rapid double reads
 }
 
-
+// ---------------------------
+// BLOCK READING FUNCTION
+// ---------------------------
 void ReadDataFromBlock(int blockNum, byte readBlockData[]) {
   for (byte i = 0; i < 6; i++) {
     key.keyByte[i] = 0xFF;
   }
+
   status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockNum, &key, &(mfrc522.uid));
   if (status != MFRC522::STATUS_OK) {
-    Serial.print("Authentication failed for Read: ");
+    Serial.print("Authentication failed: ");
     Serial.println(mfrc522.GetStatusCodeName(status));
     return;
-  } else {
-    Serial.println("Authentication success");
   }
+
   status = mfrc522.MIFARE_Read(blockNum, readBlockData, &bufferLen);
   if (status != MFRC522::STATUS_OK) {
-    Serial.print("Reading failed: ");
+    Serial.print("Read failed: ");
     Serial.println(mfrc522.GetStatusCodeName(status));
-    return;
   } else {
-    Serial.println("Block was read successfully");
+    Serial.println("Block read success.");
   }
 }

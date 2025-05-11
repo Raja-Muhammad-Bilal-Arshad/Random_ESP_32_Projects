@@ -7,17 +7,6 @@
 
 // ---------------------------
 // PIN CONFIGURATION
-/*
-Buzzer	 GPIO 15
-SDA	     GPIO 10
-SCK      GPIO 12
-MOSI     GPIO 11
-MISO     GPIO 13
-RST	     GPIO 9
-*/
-
-
-
 // ---------------------------
 #define SDA_PIN     10  // SS (SDA)
 #define RST_PIN     9
@@ -100,16 +89,23 @@ void loop() {
   tone(BUZZER_PIN, 1200, 200);
   delay(250);
 
+  // Prepare clean name from readBlockData
+  String cleanedName = "";
+  for (int i = 0; i < 16; i++) {
+    if (readBlockData[i] == 0x00 || readBlockData[i] == '-') break;
+    cleanedName += (char)readBlockData[i];
+  }
+
+  cleanedName.trim();  // Optional cleanup
+  card_holder_name = sheet_url + cleanedName;
+
+  Serial.print("Final URL: ");
+  Serial.println(card_holder_name);
+
   // Send to Google Apps Script
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClientSecure client;
-    client.setInsecure(); // accept all certificates
-
-    card_holder_name = sheet_url + String((char*)readBlockData);
-    card_holder_name.trim();  // clean up extra characters
-
-    Serial.print("[HTTPS] Requesting URL: ");
-    Serial.println(card_holder_name);
+    client.setInsecure(); // Accept all certificates
 
     HTTPClient https;
     if (https.begin(client, card_holder_name)) {
@@ -117,7 +113,8 @@ void loop() {
       if (httpCode > 0) {
         Serial.printf("[HTTPS] GET... code: %d\n", httpCode);
       } else {
-        Serial.printf("[HTTPS] GET... failed, error: %s\n", https.errorToString(httpCode).c_str());
+        Serial.print("[HTTPS] GET... Sucessfulll. Code: ");
+        Serial.println(httpCode);
       }
       https.end();
     } else {
@@ -125,10 +122,10 @@ void loop() {
     }
   }
 
-  // Halt card so another scan can happen
+  // Halt card
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
-  delay(2000);  // Prevent rapid double reads
+  delay(2000);  // Prevent duplicate reads
 }
 
 // ---------------------------

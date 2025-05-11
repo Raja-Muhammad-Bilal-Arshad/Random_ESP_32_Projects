@@ -26,7 +26,7 @@ const String sheet_url = "https://script.google.com/macros/s/AKfycby5EjBt6pC_tIi
 #define WIFI_PASSWORD "24f07870"
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println();
   Serial.print("Connecting to AP");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
